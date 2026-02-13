@@ -334,9 +334,6 @@ local selectedPlayerForAction = nil
 local openGuiHotkey = Enum.KeyCode.F5
 local multiSelectKey1 = Enum.KeyCode.LeftShift
 local multiSelectKey2 = Enum.KeyCode.RightShift
-local killAuraEnabled = false
-local killAuraConnection = nil
-local killAuraDisable = nil
 local ESPState = {
     Enabled = false,
     Glow = true,
@@ -354,13 +351,7 @@ local ESPState = {
 }
 local ESPTrackedCharacters = {}
 local ESPLookLineDistance = 1.5
-player.CharacterAdded:Connect(function(char)
-    char:WaitForChild("HumanoidRootPart", 10)
-    task.wait(1.5)
-    if giverEnabled then
-        giveWeapon()
-    end
-end)
+local function gotoPlayer(targetPlayer)
 local fakeG2Enabled = false
 local bodyVelocity = nil
 local boostConnection = nil
@@ -749,81 +740,6 @@ RunService.Heartbeat:Connect(function()
         end
     end
 end)
-local function startKillAura()
-    local killAuraDisableEvent = Instance.new("BindableEvent")
-    killAuraDisable = killAuraDisableEvent
-    local run = true
-    killAuraConnection = killAuraDisableEvent.Event:Connect(function()
-        run = false
-    end)
-    task.spawn(function()
-        local function getchar(plr)
-            return plr and plr.Character
-        end
-        local function gethumanoid(char)
-            return char and char:FindFirstChildWhichIsA("Humanoid")
-        end
-        local function IsAlive(hum)
-            return hum and hum.Health > 0
-        end
-        local function GetTouchInterest(Tool)
-            return Tool and Tool:FindFirstChildWhichIsA("TouchTransmitter", true)
-        end
-        local function GetCharacters(myChar)
-            local chars = {}
-            for _, plr in ipairs(Players:GetPlayers()) do
-                local c = getchar(plr)
-                if c and c ~= myChar then table.insert(chars, c) end
-            end
-            return chars
-        end
-        local function Attack(Tool, TouchPart, ToTouch)
-            if Tool:IsDescendantOf(workspace) then
-                Tool:Activate()
-                firetouchinterest(TouchPart, ToTouch, 1)
-                firetouchinterest(TouchPart, ToTouch, 0)
-            end
-        end
-        local Ignorelist = OverlapParams.new()
-        Ignorelist.FilterType = Enum.RaycastFilterType.Include
-        while run do
-            local char = player.Character
-            local hum = gethumanoid(char)
-            if IsAlive(hum) then
-                local Tool = char and char:FindFirstChildWhichIsA("Tool")
-                local TouchInterest = Tool and GetTouchInterest(Tool)
-                if TouchInterest then
-                    local TouchPart = TouchInterest.Parent
-                    local Characters = GetCharacters(char)
-                    Ignorelist.FilterDescendantsInstances = Characters
-                    local size = TouchPart.Size + Vector3.new(10, 10, 10)
-                    local hits = workspace:GetPartBoundsInBox(TouchPart.CFrame, size, Ignorelist)
-                    for _, v in ipairs(hits) do
-                        local hitChar = v:FindFirstAncestorWhichIsA("Model")
-                        if hitChar and table.find(Characters, hitChar) then
-                            local hitHum = gethumanoid(hitChar)
-                            if IsAlive(hitHum) then
-                                Attack(Tool, TouchPart, v)
-                            end
-                        end
-                    end
-                end
-            end
-            RunService.Heartbeat:Wait()
-        end
-    end)
-end
-local function stopKillAura()
-    if killAuraDisable then
-        killAuraDisable:Fire()
-        killAuraDisable:Destroy()
-        killAuraDisable = nil
-    end
-    if killAuraConnection then
-        killAuraConnection:Disconnect()
-        killAuraConnection = nil
-    end
-end
 local function createHitbox(targetPlayer)
     if not targetPlayer or not targetPlayer.Character then return end
     local char = targetPlayer.Character
@@ -1059,19 +975,6 @@ local function toggleLowQuality()
         end
     end
 end
-local function giveWeapon()
-    if not giverEnabled then return end
-    pcall(function()
-        local menuScreen = player.PlayerGui:WaitForChild("Menu Screen", 8)
-        if menuScreen then
-            local remoteEvent = menuScreen:WaitForChild("RemoteEvent", 5)
-            if remoteEvent then
-                remoteEvent:FireServer(selectedWeapon)
-            end
-            menuScreen:Destroy()
-        end
-    end)
-end
 Players.PlayerAdded:Connect(function()
     task.wait(1)
     updateESP()
@@ -1185,26 +1088,25 @@ local function createPlayersTabContent()
     end)
     local function getOutfitPrice(userId, label)
         task.spawn(function()
-            local success, result = pcall(function()
+            local ok, result = pcall(function()
                 local HttpService = game:GetService("HttpService")
-                local avatarUrl = "https://avatar.roblox.com/v1/users/" .. userId .. "/outfits?page=1&itemsPerPage=1"
-                local info = game:HttpGet("https://avatar.roblox.com/v1/users/" .. userId .. "/currently-wearing")
-                local data = HttpService:JSONDecode(info)
+                local MarketplaceService = game:GetService("MarketplaceService")
+                local raw = game:HttpGet("https://avatar.roblox.com/v1/users/" .. tostring(userId) .. "/currently-wearing")
+                local data = HttpService:JSONDecode(raw)
                 local total = 0
                 if data and data.assetIds then
                     for _, assetId in ipairs(data.assetIds) do
-                        local ok, priceData = pcall(function()
-                            local raw = game:HttpGet("https://economy.roblox.com/v2/assets/" .. assetId .. "/details")
-                            return HttpService:JSONDecode(raw)
+                        local infoOk, info = pcall(function()
+                            return MarketplaceService:GetProductInfo(assetId)
                         end)
-                        if ok and priceData and priceData.PriceInRobux then
-                            total = total + priceData.PriceInRobux
+                        if infoOk and info and info.PriceInRobux then
+                            total = total + info.PriceInRobux
                         end
                     end
                 end
                 return total
             end)
-            if success and type(result) == "number" then
+            if ok and type(result) == "number" then
                 label.Text = "outfit price : " .. tostring(result) .. " robux"
             else
                 label.Text = "outfit price : N/A"
@@ -1357,7 +1259,7 @@ local function createInfoTabContent()
     title.Size = UDim2.new(1, 0, 0, 50)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "UI Creators"
+    title.Text = "UI Info"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 24
@@ -1376,18 +1278,18 @@ local function createInfoTabContent()
     creator1.TextXAlignment = Enum.TextXAlignment.Left
     creator1.ZIndex = 3
     creator1.Parent = infoFrame
-    local creator2 = Instance.new("TextLabel")
-    creator2.Name = "Creator2"
-    creator2.Size = UDim2.new(1, 0, 0, 30)
-    creator2.Position = UDim2.new(0, 0, 0, 100)
-    creator2.BackgroundTransparency = 1
-    creator2.Text = "Old Creator: PunchMadeDev"
-    creator2.TextColor3 = Color3.fromRGB(200, 200, 255)
-    creator2.Font = Enum.Font.GothamMedium
-    creator2.TextSize = 18
-    creator2.TextXAlignment = Enum.TextXAlignment.Left
-    creator2.ZIndex = 3
-    creator2.Parent = infoFrame
+    local versionLabel = Instance.new("TextLabel")
+    versionLabel.Name = "Version"
+    versionLabel.Size = UDim2.new(1, 0, 0, 30)
+    versionLabel.Position = UDim2.new(0, 0, 0, 100)
+    versionLabel.BackgroundTransparency = 1
+    versionLabel.Text = "Version: 1.1"
+    versionLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    versionLabel.Font = Enum.Font.GothamMedium
+    versionLabel.TextSize = 18
+    versionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    versionLabel.ZIndex = 3
+    versionLabel.Parent = infoFrame
 end
 local function createMovementTabContent()
     clearContentArea()
@@ -2717,49 +2619,6 @@ local function createMiscTabContent()
     giverTitle.TextXAlignment = Enum.TextXAlignment.Left
     giverTitle.ZIndex = 3
     giverTitle.Parent = scrollFrame
-    local giverToggleFrame = Instance.new("Frame")
-    giverToggleFrame.Size = UDim2.new(1, 0, 0, 30)
-    giverToggleFrame.BackgroundTransparency = 1
-    giverToggleFrame.Parent = scrollFrame
-    giverToggleFrame.ZIndex = 3
-    local giverToggleLabel = Instance.new("TextLabel")
-    giverToggleLabel.Size = UDim2.new(0, 150, 1, 0)
-    giverToggleLabel.BackgroundTransparency = 1
-    giverToggleLabel.Text = "Giver:"
-    giverToggleLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
-    giverToggleLabel.Font = Enum.Font.GothamMedium
-    giverToggleLabel.TextSize = 14
-    giverToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    giverToggleLabel.ZIndex = 3
-    giverToggleLabel.Parent = giverToggleFrame
-    local giverToggleButton = Instance.new("TextButton")
-    giverToggleButton.Size = UDim2.new(0, 50, 0, 25)
-    giverToggleButton.Position = UDim2.new(1, -50, 0, 2)
-    giverToggleButton.BackgroundColor3 = giverEnabled and Color3.fromRGB(70, 100, 255) or Color3.fromRGB(50, 50, 70)
-    giverToggleButton.Text = giverEnabled and "ON" or "OFF"
-    giverToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    giverToggleButton.Font = Enum.Font.GothamMedium
-    giverToggleButton.TextSize = 12
-    giverToggleButton.AutoButtonColor = false
-    giverToggleButton.ZIndex = 3
-    giverToggleButton.Parent = giverToggleFrame
-    local giverToggleCorner = Instance.new("UICorner")
-    giverToggleCorner.CornerRadius = UDim.new(0, 6)
-    giverToggleCorner.Parent = giverToggleButton
-    local giverToggleGlow = Instance.new("UIStroke")
-    giverToggleGlow.Color = Color3.fromRGB(255, 255, 255)
-    giverToggleGlow.Transparency = 0.7
-    giverToggleGlow.Thickness = 1
-    giverToggleGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    giverToggleGlow.Parent = giverToggleButton
-    giverToggleButton.MouseButton1Click:Connect(function()
-        giverEnabled = not giverEnabled
-        giverToggleButton.Text = giverEnabled and "ON" or "OFF"
-        giverToggleButton.BackgroundColor3 = giverEnabled and Color3.fromRGB(70, 100, 255) or Color3.fromRGB(50, 50, 70)
-        if giverEnabled then
-            giveWeapon()
-        end
-    end)
     local weaponFrame = Instance.new("Frame")
     weaponFrame.Size = UDim2.new(1, 0, 0, 30)
     weaponFrame.BackgroundTransparency = 1
@@ -2852,9 +2711,6 @@ local function createMiscTabContent()
             task.wait(0.2)
             weaponMenu.Visible = false
             weaponOpen = false
-            if giverEnabled then
-                giveWeapon()
-            end
         end)
     end
     weaponDropdown.MouseButton1Click:Connect(function()
@@ -2868,64 +2724,54 @@ local function createMiscTabContent()
             weaponMenu.Visible = false
         end
     end)
-    local killAuraTitle = Instance.new("TextLabel")
-    killAuraTitle.Size = UDim2.new(1, 0, 0, 40)
-    killAuraTitle.BackgroundTransparency = 1
-    killAuraTitle.Text = "Kill Aura"
-    killAuraTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    killAuraTitle.Font = Enum.Font.GothamBold
-    killAuraTitle.TextSize = 18
-    killAuraTitle.TextXAlignment = Enum.TextXAlignment.Left
-    killAuraTitle.ZIndex = 3
-    killAuraTitle.Parent = scrollFrame
-    local killAuraFrame = Instance.new("Frame")
-    killAuraFrame.Size = UDim2.new(1, 0, 0, 30)
-    killAuraFrame.BackgroundTransparency = 1
-    killAuraFrame.Parent = scrollFrame
-    killAuraFrame.ZIndex = 3
-    local killAuraLabel = Instance.new("TextLabel")
-    killAuraLabel.Size = UDim2.new(0, 150, 1, 0)
-    killAuraLabel.BackgroundTransparency = 1
-    killAuraLabel.Text = "Kill Aura:"
-    killAuraLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
-    killAuraLabel.Font = Enum.Font.GothamMedium
-    killAuraLabel.TextSize = 14
-    killAuraLabel.TextXAlignment = Enum.TextXAlignment.Left
-    killAuraLabel.ZIndex = 3
-    killAuraLabel.Parent = killAuraFrame
-    local killAuraBtn = Instance.new("TextButton")
-    killAuraBtn.Size = UDim2.new(0, 50, 0, 25)
-    killAuraBtn.Position = UDim2.new(1, -50, 0, 2)
-    killAuraBtn.BackgroundColor3 = killAuraEnabled and Color3.fromRGB(70, 100, 255) or Color3.fromRGB(50, 50, 70)
-    killAuraBtn.Text = killAuraEnabled and "ON" or "OFF"
-    killAuraBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    killAuraBtn.Font = Enum.Font.GothamMedium
-    killAuraBtn.TextSize = 12
-    killAuraBtn.AutoButtonColor = false
-    killAuraBtn.ZIndex = 3
-    killAuraBtn.Parent = killAuraFrame
-    local kaCorner = Instance.new("UICorner") kaCorner.CornerRadius = UDim.new(0, 6) kaCorner.Parent = killAuraBtn
-    local kaGlow = Instance.new("UIStroke") kaGlow.Color = Color3.fromRGB(255,255,255) kaGlow.Transparency = 0.7 kaGlow.Thickness = 1 kaGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border kaGlow.Parent = killAuraBtn
-    killAuraBtn.MouseButton1Click:Connect(function()
-        killAuraEnabled = not killAuraEnabled
-        killAuraBtn.Text = killAuraEnabled and "ON" or "OFF"
-        killAuraBtn.BackgroundColor3 = killAuraEnabled and Color3.fromRGB(70, 100, 255) or Color3.fromRGB(50, 50, 70)
-        if killAuraEnabled then
-            startKillAura()
-        else
-            stopKillAura()
+    local giverBtnFrame = Instance.new("Frame")
+    giverBtnFrame.Size = UDim2.new(1, 0, 0, 35)
+    giverBtnFrame.BackgroundTransparency = 1
+    giverBtnFrame.Parent = scrollFrame
+    giverBtnFrame.ZIndex = 3
+    local giverTurnOnBtn = Instance.new("TextButton")
+    giverTurnOnBtn.Size = UDim2.new(1, 0, 0, 30)
+    giverTurnOnBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    giverTurnOnBtn.Text = "Turn On"
+    giverTurnOnBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    giverTurnOnBtn.Font = Enum.Font.GothamBold
+    giverTurnOnBtn.TextSize = 14
+    giverTurnOnBtn.AutoButtonColor = false
+    giverTurnOnBtn.ZIndex = 3
+    giverTurnOnBtn.Parent = giverBtnFrame
+    local giverBtnCorner = Instance.new("UICorner")
+    giverBtnCorner.CornerRadius = UDim.new(0, 6)
+    giverBtnCorner.Parent = giverTurnOnBtn
+    local giverBtnStroke = Instance.new("UIStroke")
+    giverBtnStroke.Color = Color3.fromRGB(70, 100, 255)
+    giverBtnStroke.Transparency = 0.5
+    giverBtnStroke.Thickness = 1
+    giverBtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    giverBtnStroke.Parent = giverTurnOnBtn
+    giverTurnOnBtn.MouseEnter:Connect(function()
+        giverTurnOnBtn.BackgroundColor3 = Color3.fromRGB(70, 100, 255)
+    end)
+    giverTurnOnBtn.MouseLeave:Connect(function()
+        if not giverEnabled then
+            giverTurnOnBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
         end
     end)
-    local killAuraInfo = Instance.new("TextLabel")
-    killAuraInfo.Size = UDim2.new(1, 0, 0, 20)
-    killAuraInfo.BackgroundTransparency = 1
-    killAuraInfo.Text = "Requires a Tool/Weapon equipped to work"
-    killAuraInfo.TextColor3 = Color3.fromRGB(150, 150, 170)
-    killAuraInfo.Font = Enum.Font.Gotham
-    killAuraInfo.TextSize = 11
-    killAuraInfo.TextXAlignment = Enum.TextXAlignment.Left
-    killAuraInfo.ZIndex = 3
-    killAuraInfo.Parent = scrollFrame
+    giverTurnOnBtn.MouseButton1Click:Connect(function()
+        giverEnabled = true
+        giverTurnOnBtn.Text = "Active ✓"
+        giverTurnOnBtn.BackgroundColor3 = Color3.fromRGB(70, 100, 255)
+        player.CharacterAdded:Connect(function()
+            player.PlayerGui:WaitForChild("Menu Screen"):WaitForChild("RemoteEvent"):FireServer(selectedWeapon)
+            player.PlayerGui["Menu Screen"].Enabled = false
+        end)
+        if player.PlayerGui:FindFirstChild("Menu Screen") then
+            local ms = player.PlayerGui["Menu Screen"]
+            if ms:FindFirstChild("RemoteEvent") then
+                ms.RemoteEvent:FireServer(selectedWeapon)
+                ms.Enabled = false
+            end
+        end
+    end)
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 40)
 end
 local function createPlaceholderContent(tabName)
@@ -3070,4 +2916,4 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 selectTab("Home")
-print("vividade executed")
+print("vividade version 1.1")

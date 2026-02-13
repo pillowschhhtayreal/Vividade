@@ -1,7 +1,9 @@
 
-Vividade , silly script by me. CHAOS script , autogiver and outfit price and killaura are kinda buggy , sorry. Open sourced because yes.
+Vividade , silly script by me. CHAOS script. Open sourced because yes.
 Loadstring for dumb people (like me) :
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vividade/refs/heads/main/vividade"))()
 
-More updates soon , maybe...
+New Update (Version 1.1) 
+------------------------
+Fixed AutoGiver and outfit price , removed KillAura.

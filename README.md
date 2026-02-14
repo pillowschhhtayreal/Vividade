@@ -6,4 +6,4 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vi
 
 New Update (Version 1.1) 
 ------------------------
-Fixed AutoGiver and outfit price , removed KillAura. (NO LONGER OPEN SOURCED)
+Fixed AutoGiver and outfit price , removed KillAura. (OPEN SOURCED)

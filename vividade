@@ -352,6 +352,10 @@ local ESPState = {
 local ESPTrackedCharacters = {}
 local ESPLookLineDistance = 1.5
 local fakeG2Enabled = false
+local fakeG2V2Enabled = false
+local doubleJumpEnabled = false
+local doubleJumpHotkey = Enum.KeyCode.Q
+local doubleJumpConnection = nil
 local bodyVelocity = nil
 local boostConnection = nil
 local fakeG2SelectedItem = "Throwing Knife"
@@ -365,9 +369,166 @@ local lowQualityEnabled = false
 local originalRenderDistance = nil
 local giverEnabled = false
 local hitboxEnabled = false
+local hitboxTargetPlayers = {"all"}
 local hitboxSize = 10
 local hitboxColor = Color3.fromRGB(255, 0, 0)
 local hitboxParts = {}
+local function setupDoubleJump()
+    if doubleJumpConnection then
+        doubleJumpConnection:Disconnect()
+        doubleJumpConnection = nil
+    end
+    if not doubleJumpEnabled then return end
+
+    local hasDoubleJumped = false
+    local canUse = true
+    local mouse = player:GetMouse()
+
+    local function performDoubleJump()
+        if not canUse then return end
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid and not hasDoubleJumped then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            task.wait(0.1)
+            for _, v in ipairs(player.Backpack:GetChildren()) do
+                if v.Name == "C4" and v:FindFirstChild("RemoteEvent") then
+                    v.Parent = player.Character
+                    task.wait()
+                    humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                    task.wait(0.1)
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    v.RemoteEvent:FireServer(mouse.Hit.LookVector)
+                    v.Parent = player.Backpack
+                end
+            end
+            task.wait(0.1)
+            for _, v in ipairs(player.Backpack:GetChildren()) do
+                if v.Name == "Grenade" and v:FindFirstChild("RemoteEvent") then
+                    v.Parent = player.Character
+                    task.wait()
+                    humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                    task.wait(0.1)
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    v:Activate()
+                    v.Parent = player.Backpack
+                end
+            end
+            hasDoubleJumped = true
+            canUse = false
+        end
+    end
+
+    doubleJumpConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == doubleJumpHotkey then
+            performDoubleJump()
+        end
+    end)
+
+    player.CharacterAdded:Connect(function()
+        task.wait(1)
+        hasDoubleJumped = false
+        canUse = true
+    end)
+end
+
+local function startFakeG2V2()
+    fakeG2V2Enabled = true
+    fakeG2Enabled = false
+    local spinSpeed = 40
+    local flingPower = 200
+    local REQUIRED_TOOL_NAME = "Throwing Knife"
+    local spinning = false
+    local currentTool = nil
+    local sidewaysForce = 350
+    local upwardForce = 50
+    local isEquipped = false
+    local wallCheckDistance = 1
+    local rightSlideSpeed = 200
+
+    local function setupCharV2(char)
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and child.Name == REQUIRED_TOOL_NAME then
+                spinning = true
+                currentTool = child
+                isEquipped = true
+                task.spawn(function()
+                    while spinning and currentTool and currentTool.Parent == char do
+                        RunService.RenderStepped:Wait()
+                        local root = char:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(spinSpeed), 0)
+                        end
+                    end
+                end)
+                child.Unequipped:Connect(function()
+                    isEquipped = false
+                end)
+                child.Equipped:Connect(function()
+                    isEquipped = true
+                end)
+            end
+        end)
+        char.ChildRemoved:Connect(function(child)
+            if child == currentTool then
+                spinning = false
+                currentTool = nil
+                isEquipped = false
+            end
+        end)
+        local humanoid = char:WaitForChild("Humanoid")
+        local root = char:WaitForChild("HumanoidRootPart")
+        humanoid.Jumping:Connect(function()
+            if spinning and root then
+                local sideways = root.CFrame.RightVector * flingPower
+                root.AssemblyLinearVelocity = Vector3.new(sideways.X, root.AssemblyLinearVelocity.Y, sideways.Z)
+            end
+        end)
+        local wallSliding = false
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.Freefall then
+                local forward = root.CFrame.LookVector
+                local ray = Ray.new(root.Position, forward * wallCheckDistance)
+                local part = workspace:FindPartOnRay(ray, char)
+                if part and part.CanCollide then
+                    wallSliding = true
+                    local rightVector = root.CFrame.RightVector
+                    root.Velocity = rightVector * rightSlideSpeed + Vector3.new(0, root.Velocity.Y, 0)
+                else
+                    wallSliding = false
+                end
+            else
+                wallSliding = false
+            end
+        end)
+        humanoid.Died:Connect(function()
+            if conn then conn:Disconnect() end
+        end)
+    end
+
+    UserInputService.JumpRequest:Connect(function()
+        if isEquipped and fakeG2V2Enabled then
+            local character = player.Character
+            if not character then return end
+            local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+            if not humanoidRootPart then return end
+            local camRight = workspace.CurrentCamera.CFrame.RightVector
+            humanoidRootPart.Velocity = (camRight * sidewaysForce) + Vector3.new(0, upwardForce, 0)
+        end
+    end)
+
+    if player.Character then setupCharV2(player.Character) end
+    player.CharacterAdded:Connect(function(char)
+        spinning = false
+        currentTool = nil
+        isEquipped = false
+        setupCharV2(char)
+    end)
+end
+
 local function getClosestPlayer()
     local closestPlayer = nil
     local shortestDistance = aimbotRange
@@ -375,24 +536,23 @@ local function getClosestPlayer()
         return nil
     end
     for _, v in pairs(Players:GetPlayers()) do
-        if v ~= player and v.Character and v.Character:FindFirstChild("Head") then
+        if v ~= player then
+            local char = v.Character
+            local head = char and char:FindFirstChild("Head")
+            if not head then continue end
             local targetMatch = false
             for _, target in ipairs(aimbotTargetPlayers) do
-                if target:lower() == "all" then
-                    targetMatch = true
-                    break
-                end
+                if target:lower() == "all" then targetMatch = true break end
             end
             if not targetMatch then
                 for _, target in ipairs(aimbotTargetPlayers) do
                     if v.Name:lower() == target:lower() or v.DisplayName:lower() == target:lower() then
-                        targetMatch = true
-                        break
+                        targetMatch = true break
                     end
                 end
             end
             if targetMatch then
-                local distance = (v.Character.Head.Position - player.Character.Head.Position).Magnitude
+                local distance = (head.Position - player.Character.Head.Position).Magnitude
                 if distance < shortestDistance then
                     closestPlayer = v
                     shortestDistance = distance
@@ -770,6 +930,13 @@ local function removeHitbox(playerName)
         hitboxParts[playerName] = nil
     end
 end
+local function isHitboxTargeted(plr)
+    for _, t in ipairs(hitboxTargetPlayers) do
+        if t:lower() == "all" then return true end
+        if plr.Name:lower() == t:lower() or plr.DisplayName:lower() == t:lower() then return true end
+    end
+    return false
+end
 local function updateHitboxes()
     for name, part in pairs(hitboxParts) do
         part:Destroy()
@@ -777,7 +944,7 @@ local function updateHitboxes()
     hitboxParts = {}
     if not hitboxEnabled then return end
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and plr.Character then
+        if plr ~= player and plr.Character and isHitboxTargeted(plr) then
             createHitbox(plr)
         end
     end
@@ -793,11 +960,21 @@ end
 Players.PlayerAdded:Connect(function(plr)
     plr.CharacterAdded:Connect(function()
         task.wait(0.5)
-        if hitboxEnabled then
+        if hitboxEnabled and isHitboxTargeted(plr) then
             createHitbox(plr)
         end
     end)
 end)
+for _, plr in ipairs(Players:GetPlayers()) do
+    if plr ~= player then
+        plr.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if hitboxEnabled and isHitboxTargeted(plr) then
+                createHitbox(plr)
+            end
+        end)
+    end
+end
 Players.PlayerRemoving:Connect(function(plr)
     removeHitbox(plr.Name)
 end)
@@ -1276,12 +1453,24 @@ local function createInfoTabContent()
     creator1.TextXAlignment = Enum.TextXAlignment.Left
     creator1.ZIndex = 3
     creator1.Parent = infoFrame
+    local helperLabel = Instance.new("TextLabel")
+    helperLabel.Name = "Helper"
+    helperLabel.Size = UDim2.new(1, 0, 0, 30)
+    helperLabel.Position = UDim2.new(0, 0, 0, 95)
+    helperLabel.BackgroundTransparency = 1
+    helperLabel.Text = "Sar - Co Owner"
+    helperLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    helperLabel.Font = Enum.Font.GothamMedium
+    helperLabel.TextSize = 18
+    helperLabel.TextXAlignment = Enum.TextXAlignment.Left
+    helperLabel.ZIndex = 3
+    helperLabel.Parent = infoFrame
     local versionLabel = Instance.new("TextLabel")
     versionLabel.Name = "Version"
     versionLabel.Size = UDim2.new(1, 0, 0, 30)
-    versionLabel.Position = UDim2.new(0, 0, 0, 100)
+    versionLabel.Position = UDim2.new(0, 0, 0, 130)
     versionLabel.BackgroundTransparency = 1
-    versionLabel.Text = "Version: 1.1"
+    versionLabel.Text = "Version: 1.2"
     versionLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
     versionLabel.Font = Enum.Font.GothamMedium
     versionLabel.TextSize = 18
@@ -1461,6 +1650,186 @@ local function createMovementTabContent()
             task.wait(0.2)
             dropdownMenu.Visible = false
         end
+    end)
+    local fakeG2V2Title = Instance.new("TextLabel")
+    fakeG2V2Title.Size = UDim2.new(1, 0, 0, 30)
+    fakeG2V2Title.BackgroundTransparency = 1
+    fakeG2V2Title.Text = "Fake G2 V2"
+    fakeG2V2Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    fakeG2V2Title.Font = Enum.Font.GothamBold
+    fakeG2V2Title.TextSize = 18
+    fakeG2V2Title.TextXAlignment = Enum.TextXAlignment.Left
+    fakeG2V2Title.ZIndex = 3
+    fakeG2V2Title.Parent = scrollFrame
+    local fakeG2V2Frame = Instance.new("Frame")
+    fakeG2V2Frame.Size = UDim2.new(1, 0, 0, 30)
+    fakeG2V2Frame.BackgroundTransparency = 1
+    fakeG2V2Frame.Parent = scrollFrame
+    fakeG2V2Frame.ZIndex = 3
+    local fakeG2V2Label = Instance.new("TextLabel")
+    fakeG2V2Label.Size = UDim2.new(0, 150, 1, 0)
+    fakeG2V2Label.BackgroundTransparency = 1
+    fakeG2V2Label.Text = "Fake G2 V2:"
+    fakeG2V2Label.TextColor3 = Color3.fromRGB(220, 220, 255)
+    fakeG2V2Label.Font = Enum.Font.GothamMedium
+    fakeG2V2Label.TextSize = 14
+    fakeG2V2Label.TextXAlignment = Enum.TextXAlignment.Left
+    fakeG2V2Label.ZIndex = 3
+    fakeG2V2Label.Parent = fakeG2V2Frame
+    local fakeG2V2Btn = Instance.new("TextButton")
+    fakeG2V2Btn.Size = UDim2.new(0, 80, 0, 25)
+    fakeG2V2Btn.Position = UDim2.new(1, -80, 0, 2)
+    fakeG2V2Btn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    fakeG2V2Btn.Text = "Turn On"
+    fakeG2V2Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    fakeG2V2Btn.Font = Enum.Font.GothamMedium
+    fakeG2V2Btn.TextSize = 11
+    fakeG2V2Btn.AutoButtonColor = false
+    fakeG2V2Btn.ZIndex = 3
+    fakeG2V2Btn.Parent = fakeG2V2Frame
+    local v2BtnCorner = Instance.new("UICorner")
+    v2BtnCorner.CornerRadius = UDim.new(0, 6)
+    v2BtnCorner.Parent = fakeG2V2Btn
+    local v2BtnStroke = Instance.new("UIStroke")
+    v2BtnStroke.Color = Color3.fromRGB(255, 255, 255)
+    v2BtnStroke.Transparency = 0.7
+    v2BtnStroke.Thickness = 1
+    v2BtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    v2BtnStroke.Parent = fakeG2V2Btn
+    local v2HintLabel = Instance.new("TextLabel")
+    v2HintLabel.Size = UDim2.new(1, 0, 0, 18)
+    v2HintLabel.BackgroundTransparency = 1
+    v2HintLabel.Text = "Equip Throwing Knife and jump without shiftlock."
+    v2HintLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
+    v2HintLabel.Font = Enum.Font.Gotham
+    v2HintLabel.TextSize = 10
+    v2HintLabel.TextXAlignment = Enum.TextXAlignment.Left
+    v2HintLabel.ZIndex = 3
+    v2HintLabel.Parent = scrollFrame
+    local v2RejoinLabel = Instance.new("TextLabel")
+    v2RejoinLabel.Size = UDim2.new(1, 0, 0, 16)
+    v2RejoinLabel.BackgroundTransparency = 1
+    v2RejoinLabel.Text = "Rejoin To Turn Off"
+    v2RejoinLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
+    v2RejoinLabel.Font = Enum.Font.Gotham
+    v2RejoinLabel.TextSize = 10
+    v2RejoinLabel.TextXAlignment = Enum.TextXAlignment.Left
+    v2RejoinLabel.ZIndex = 3
+    v2RejoinLabel.Parent = scrollFrame
+    fakeG2V2Btn.MouseButton1Click:Connect(function()
+        if fakeG2V2Enabled then return end
+        fakeG2V2Btn.Text = "Active ✓"
+        fakeG2V2Btn.BackgroundColor3 = Color3.fromRGB(70, 100, 255)
+        fakeG2Enabled = false
+        startFakeG2V2()
+    end)
+    local djTitle = Instance.new("TextLabel")
+    djTitle.Size = UDim2.new(1, 0, 0, 30)
+    djTitle.BackgroundTransparency = 1
+    djTitle.Text = "Double Jump"
+    djTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    djTitle.Font = Enum.Font.GothamBold
+    djTitle.TextSize = 18
+    djTitle.TextXAlignment = Enum.TextXAlignment.Left
+    djTitle.ZIndex = 3
+    djTitle.Parent = scrollFrame
+    local djToggleFrame = Instance.new("Frame")
+    djToggleFrame.Size = UDim2.new(1, 0, 0, 30)
+    djToggleFrame.BackgroundTransparency = 1
+    djToggleFrame.Parent = scrollFrame
+    djToggleFrame.ZIndex = 3
+    local djToggleLabel = Instance.new("TextLabel")
+    djToggleLabel.Size = UDim2.new(0, 150, 1, 0)
+    djToggleLabel.BackgroundTransparency = 1
+    djToggleLabel.Text = "Double Jump:"
+    djToggleLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
+    djToggleLabel.Font = Enum.Font.GothamMedium
+    djToggleLabel.TextSize = 14
+    djToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    djToggleLabel.ZIndex = 3
+    djToggleLabel.Parent = djToggleFrame
+    local djToggleBtn = Instance.new("TextButton")
+    djToggleBtn.Size = UDim2.new(0, 50, 0, 25)
+    djToggleBtn.Position = UDim2.new(1, -50, 0, 2)
+    djToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    djToggleBtn.Text = "OFF"
+    djToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    djToggleBtn.Font = Enum.Font.GothamMedium
+    djToggleBtn.TextSize = 12
+    djToggleBtn.AutoButtonColor = false
+    djToggleBtn.ZIndex = 3
+    djToggleBtn.Parent = djToggleFrame
+    local djToggleCorner = Instance.new("UICorner")
+    djToggleCorner.CornerRadius = UDim.new(0, 6)
+    djToggleCorner.Parent = djToggleBtn
+    local djToggleStroke = Instance.new("UIStroke")
+    djToggleStroke.Color = Color3.fromRGB(255, 255, 255)
+    djToggleStroke.Transparency = 0.7
+    djToggleStroke.Thickness = 1
+    djToggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    djToggleStroke.Parent = djToggleBtn
+    local djHotkeyFrame = Instance.new("Frame")
+    djHotkeyFrame.Size = UDim2.new(1, 0, 0, 30)
+    djHotkeyFrame.BackgroundTransparency = 1
+    djHotkeyFrame.Parent = scrollFrame
+    djHotkeyFrame.ZIndex = 3
+    local djHotkeyLabel = Instance.new("TextLabel")
+    djHotkeyLabel.Size = UDim2.new(0, 150, 1, 0)
+    djHotkeyLabel.BackgroundTransparency = 1
+    djHotkeyLabel.Text = "Hotkey: Q"
+    djHotkeyLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
+    djHotkeyLabel.Font = Enum.Font.GothamMedium
+    djHotkeyLabel.TextSize = 14
+    djHotkeyLabel.TextXAlignment = Enum.TextXAlignment.Left
+    djHotkeyLabel.ZIndex = 3
+    djHotkeyLabel.Parent = djHotkeyFrame
+    local djHotkeyBtn = Instance.new("TextButton")
+    djHotkeyBtn.Size = UDim2.new(1, -160, 0, 25)
+    djHotkeyBtn.Position = UDim2.new(0, 150, 0, 2)
+    djHotkeyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    djHotkeyBtn.Text = "SET"
+    djHotkeyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    djHotkeyBtn.Font = Enum.Font.GothamMedium
+    djHotkeyBtn.TextSize = 12
+    djHotkeyBtn.AutoButtonColor = false
+    djHotkeyBtn.ZIndex = 3
+    djHotkeyBtn.Parent = djHotkeyFrame
+    local djHotkeyCorner = Instance.new("UICorner")
+    djHotkeyCorner.CornerRadius = UDim.new(0, 6)
+    djHotkeyCorner.Parent = djHotkeyBtn
+    local djHotkeyStroke = Instance.new("UIStroke")
+    djHotkeyStroke.Color = Color3.fromRGB(70, 100, 255)
+    djHotkeyStroke.Transparency = 0.7
+    djHotkeyStroke.Thickness = 1
+    djHotkeyStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    djHotkeyStroke.Parent = djHotkeyBtn
+    local settingDJHotkey = false
+    djHotkeyBtn.MouseButton1Click:Connect(function()
+        if settingDJHotkey then return end
+        settingDJHotkey = true
+        djHotkeyBtn.Text = "..."
+        djHotkeyBtn.BackgroundColor3 = Color3.fromRGB(70, 100, 255)
+        local conn
+        conn = UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                doubleJumpHotkey = input.KeyCode
+                djHotkeyLabel.Text = "Hotkey: " .. input.KeyCode.Name:upper()
+                djHotkeyBtn.Text = "SET"
+                djHotkeyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+                settingDJHotkey = false
+                conn:Disconnect()
+                if doubleJumpEnabled then
+                    setupDoubleJump()
+                end
+            end
+        end)
+    end)
+    djToggleBtn.MouseButton1Click:Connect(function()
+        doubleJumpEnabled = not doubleJumpEnabled
+        djToggleBtn.Text = doubleJumpEnabled and "ON" or "OFF"
+        djToggleBtn.BackgroundColor3 = doubleJumpEnabled and Color3.fromRGB(70, 100, 255) or Color3.fromRGB(50, 50, 70)
+        setupDoubleJump()
     end)
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 40)
 end
@@ -2301,16 +2670,18 @@ local function createMiscTabContent()
             if c:IsA("TextButton") then c:Destroy() end
         end
         targetBtns = {}
-        local allItems = {"all"}
+        local allItems = {{name = "all", display = "all"}}
         for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= player then table.insert(allItems, plr.Name) end
+            if plr ~= player then
+                table.insert(allItems, {name = plr.Name, display = plr.DisplayName .. " (" .. plr.Name .. ")"})
+            end
         end
-        for _, name in ipairs(allItems) do
+        for _, item in ipairs(allItems) do
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, 0, 0, 26)
-            btn.BackgroundColor3 = isAimbotTargeted(name) and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
-            btn.BackgroundTransparency = isAimbotTargeted(name) and 0.2 or 0.3
-            btn.Text = name
+            btn.BackgroundColor3 = isAimbotTargeted(item.name) and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+            btn.BackgroundTransparency = isAimbotTargeted(item.name) and 0.2 or 0.3
+            btn.Text = item.display
             btn.TextColor3 = Color3.fromRGB(255, 255, 255)
             btn.Font = Enum.Font.GothamMedium
             btn.TextSize = 11
@@ -2319,10 +2690,10 @@ local function createMiscTabContent()
             btn.ZIndex = 21
             btn.Parent = targetMenu
             local p = Instance.new("UIPadding") p.PaddingLeft = UDim.new(0,10) p.Parent = btn
-            targetBtns[name] = btn
+            targetBtns[item.name] = btn
             btn.MouseButton1Click:Connect(function()
                 local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-                if name == "all" then
+                if item.name == "all" then
                     aimbotTargetPlayers = {"all"}
                     for n, b in pairs(targetBtns) do
                         b.BackgroundColor3 = n == "all" and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
@@ -2334,9 +2705,9 @@ local function createMiscTabContent()
                     end
                     local found = false
                     for i, t in ipairs(aimbotTargetPlayers) do
-                        if t == name then table.remove(aimbotTargetPlayers, i) found = true break end
+                        if t == item.name then table.remove(aimbotTargetPlayers, i) found = true break end
                     end
-                    if not found then table.insert(aimbotTargetPlayers, name) end
+                    if not found then table.insert(aimbotTargetPlayers, item.name) end
                     if #aimbotTargetPlayers == 0 then aimbotTargetPlayers = {"all"} end
                     for n, b in pairs(targetBtns) do
                         local sel = isAimbotTargeted(n)
@@ -2344,10 +2715,10 @@ local function createMiscTabContent()
                         b.BackgroundTransparency = sel and 0.2 or 0.3
                     end
                 else
-                    aimbotTargetPlayers = {name}
+                    aimbotTargetPlayers = {item.name}
                     for n, b in pairs(targetBtns) do
-                        b.BackgroundColor3 = n == name and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
-                        b.BackgroundTransparency = n == name and 0.2 or 0.3
+                        b.BackgroundColor3 = n == item.name and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+                        b.BackgroundTransparency = n == item.name and 0.2 or 0.3
                     end
                 end
                 targetDropdown.Text = getTargetDisplayText()
@@ -2605,6 +2976,150 @@ local function createMiscTabContent()
             TweenService:Create(hitboxColorMenu, TweenInfo.new(0.2), {Size = UDim2.new(1, -160, 0, 0)}):Play()
             task.wait(0.2)
             hitboxColorMenu.Visible = false
+        end
+    end)
+    local hbTargetFrame = Instance.new("Frame")
+    hbTargetFrame.Size = UDim2.new(1, 0, 0, 70)
+    hbTargetFrame.BackgroundTransparency = 1
+    hbTargetFrame.Parent = scrollFrame
+    hbTargetFrame.ZIndex = 3
+    local hbTargetLabel = Instance.new("TextLabel")
+    hbTargetLabel.Size = UDim2.new(0, 150, 0, 30)
+    hbTargetLabel.BackgroundTransparency = 1
+    hbTargetLabel.Text = "Target Player:"
+    hbTargetLabel.TextColor3 = Color3.fromRGB(220, 220, 255)
+    hbTargetLabel.Font = Enum.Font.GothamMedium
+    hbTargetLabel.TextSize = 14
+    hbTargetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    hbTargetLabel.ZIndex = 3
+    hbTargetLabel.Parent = hbTargetFrame
+    local function getHBTargetText()
+        for _, t in ipairs(hitboxTargetPlayers) do
+            if t:lower() == "all" then return "all  ▼" end
+        end
+        if #hitboxTargetPlayers == 1 then return hitboxTargetPlayers[1] .. "  ▼" end
+        return #hitboxTargetPlayers .. " players  ▼"
+    end
+    local hbTargetDropdown = Instance.new("TextButton")
+    hbTargetDropdown.Size = UDim2.new(1, -160, 0, 28)
+    hbTargetDropdown.Position = UDim2.new(0, 150, 0, 0)
+    hbTargetDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    hbTargetDropdown.Text = getHBTargetText()
+    hbTargetDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hbTargetDropdown.Font = Enum.Font.GothamMedium
+    hbTargetDropdown.TextSize = 12
+    hbTargetDropdown.TextXAlignment = Enum.TextXAlignment.Left
+    hbTargetDropdown.AutoButtonColor = false
+    hbTargetDropdown.ZIndex = 3
+    hbTargetDropdown.Parent = hbTargetFrame
+    local hbTdPad = Instance.new("UIPadding") hbTdPad.PaddingLeft = UDim.new(0,10) hbTdPad.Parent = hbTargetDropdown
+    local hbTdCorner = Instance.new("UICorner") hbTdCorner.CornerRadius = UDim.new(0,6) hbTdCorner.Parent = hbTargetDropdown
+    local hbTdStroke = Instance.new("UIStroke") hbTdStroke.Color = Color3.fromRGB(70,100,255) hbTdStroke.Transparency = 0.7 hbTdStroke.Thickness = 1 hbTdStroke.Parent = hbTargetDropdown
+    local hbTargetInfo = Instance.new("TextLabel")
+    hbTargetInfo.Size = UDim2.new(1, -160, 0, 15)
+    hbTargetInfo.Position = UDim2.new(0, 150, 0, 32)
+    hbTargetInfo.BackgroundTransparency = 1
+    hbTargetInfo.Text = "Shift+Click to select multiple"
+    hbTargetInfo.TextColor3 = Color3.fromRGB(150, 150, 170)
+    hbTargetInfo.Font = Enum.Font.Gotham
+    hbTargetInfo.TextSize = 10
+    hbTargetInfo.TextXAlignment = Enum.TextXAlignment.Left
+    hbTargetInfo.ZIndex = 3
+    hbTargetInfo.Parent = hbTargetFrame
+    local hbTargetMenu = Instance.new("ScrollingFrame")
+    hbTargetMenu.Size = UDim2.new(1, -160, 0, 0)
+    hbTargetMenu.Position = UDim2.new(0, 150, 0, 50)
+    hbTargetMenu.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    hbTargetMenu.BorderSizePixel = 0
+    hbTargetMenu.ClipsDescendants = true
+    hbTargetMenu.Visible = false
+    hbTargetMenu.ScrollBarThickness = 4
+    hbTargetMenu.ZIndex = 20
+    hbTargetMenu.Parent = hbTargetFrame
+    local hbTmCorner = Instance.new("UICorner") hbTmCorner.CornerRadius = UDim.new(0,6) hbTmCorner.Parent = hbTargetMenu
+    local hbTmStroke = Instance.new("UIStroke") hbTmStroke.Color = Color3.fromRGB(70,100,255) hbTmStroke.Transparency = 0.7 hbTmStroke.Thickness = 1 hbTmStroke.Parent = hbTargetMenu
+    local hbTmLayout = Instance.new("UIListLayout") hbTmLayout.SortOrder = Enum.SortOrder.LayoutOrder hbTmLayout.Parent = hbTargetMenu
+    local hbTargetOpen = false
+    local hbTargetBtns = {}
+    local function isHBTargetedLocal(name)
+        for _, t in ipairs(hitboxTargetPlayers) do
+            if t:lower() == name:lower() then return true end
+        end
+        return false
+    end
+    local function populateHBTargetList()
+        for _, c in ipairs(hbTargetMenu:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        hbTargetBtns = {}
+        local allItems = {{name = "all", display = "all"}}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player then
+                table.insert(allItems, {name = plr.Name, display = plr.DisplayName .. " (" .. plr.Name .. ")"})
+            end
+        end
+        for _, item in ipairs(allItems) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, 0, 0, 26)
+            btn.BackgroundColor3 = isHBTargetedLocal(item.name) and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+            btn.BackgroundTransparency = isHBTargetedLocal(item.name) and 0.2 or 0.3
+            btn.Text = item.display
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.Font = Enum.Font.GothamMedium
+            btn.TextSize = 11
+            btn.TextXAlignment = Enum.TextXAlignment.Left
+            btn.AutoButtonColor = false
+            btn.ZIndex = 21
+            btn.Parent = hbTargetMenu
+            local p = Instance.new("UIPadding") p.PaddingLeft = UDim.new(0,10) p.Parent = btn
+            hbTargetBtns[item.name] = btn
+            btn.MouseButton1Click:Connect(function()
+                local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+                if item.name == "all" then
+                    hitboxTargetPlayers = {"all"}
+                    for n, b in pairs(hbTargetBtns) do
+                        b.BackgroundColor3 = n == "all" and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+                        b.BackgroundTransparency = n == "all" and 0.2 or 0.3
+                    end
+                elseif shift then
+                    for i, t in ipairs(hitboxTargetPlayers) do
+                        if t == "all" then table.remove(hitboxTargetPlayers, i) break end
+                    end
+                    local found = false
+                    for i, t in ipairs(hitboxTargetPlayers) do
+                        if t == item.name then table.remove(hitboxTargetPlayers, i) found = true break end
+                    end
+                    if not found then table.insert(hitboxTargetPlayers, item.name) end
+                    if #hitboxTargetPlayers == 0 then hitboxTargetPlayers = {"all"} end
+                    for n, b in pairs(hbTargetBtns) do
+                        local sel = isHBTargetedLocal(n)
+                        b.BackgroundColor3 = sel and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+                        b.BackgroundTransparency = sel and 0.2 or 0.3
+                    end
+                else
+                    hitboxTargetPlayers = {item.name}
+                    for n, b in pairs(hbTargetBtns) do
+                        b.BackgroundColor3 = n == item.name and Color3.fromRGB(70,100,255) or Color3.fromRGB(30,30,40)
+                        b.BackgroundTransparency = n == item.name and 0.2 or 0.3
+                    end
+                end
+                hbTargetDropdown.Text = getHBTargetText()
+                updateHitboxes()
+            end)
+        end
+        hbTargetMenu.CanvasSize = UDim2.new(0, 0, 0, hbTmLayout.AbsoluteContentSize.Y)
+    end
+    hbTargetDropdown.MouseButton1Click:Connect(function()
+        hbTargetOpen = not hbTargetOpen
+        if hbTargetOpen then
+            populateHBTargetList()
+            hbTargetMenu.Visible = true
+            local h = math.min(150, #Players:GetPlayers() * 26 + 26)
+            TweenService:Create(hbTargetMenu, TweenInfo.new(0.2), {Size = UDim2.new(1,-160,0,h)}):Play()
+        else
+            TweenService:Create(hbTargetMenu, TweenInfo.new(0.2), {Size = UDim2.new(1,-160,0,0)}):Play()
+            task.wait(0.2)
+            hbTargetMenu.Visible = false
         end
     end)
     local giverTitle = Instance.new("TextLabel")

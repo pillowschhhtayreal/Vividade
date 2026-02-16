@@ -1458,7 +1458,7 @@ local function createInfoTabContent()
     helperLabel.Size = UDim2.new(1, 0, 0, 30)
     helperLabel.Position = UDim2.new(0, 0, 0, 95)
     helperLabel.BackgroundTransparency = 1
-    helperLabel.Text = "Sar - Co Owner"
+    helperLabel.Text = "Co Owner: Sar"
     helperLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
     helperLabel.Font = Enum.Font.GothamMedium
     helperLabel.TextSize = 18
@@ -3327,3 +3327,4 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 selectTab("Home")
+

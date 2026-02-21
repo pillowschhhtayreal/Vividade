@@ -2,7 +2,7 @@
 Vividade , silly script by me. CHAOS script.
 Loadstring for dumb people (like me) :
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vividade/refs/heads/main/vividade"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vividade/refs/heads/main/vividade.lua"))()
 
 New Update (Version 1.2) 
 ------------------------

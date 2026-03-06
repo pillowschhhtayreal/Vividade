@@ -4,9 +4,9 @@ Loadstring for dumb people (like me) :
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vividade/refs/heads/main/vividade.lua"))()
 
-New Update (Version 1.2) 
+New Update (Version 1.3) 
 ------------------------
-Fake G2 (v2) and double jump , fixed aimbot and hitbox not appearing after respawn. 
+Rank System. 
 
 
 ScriptBlox

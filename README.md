@@ -4,9 +4,9 @@ Loadstring for dumb people (like me) :
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/pillowschhhtayreal/Vividade/refs/heads/main/Vividade.lua"))()
 
-New Update (Version 1.3) 
+New Update (Version 1.4) 
 ------------------------
-Rank System. 
+New commands. (:whitelist , :blacklist , :kick , :users)
 
 
 ScriptBlox
